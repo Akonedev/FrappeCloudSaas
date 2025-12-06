@@ -1,0 +1,55 @@
+# ============================================
+# Patch: Agent HTTP Communication
+# ============================================
+# Ce patch permet la communication HTTP (non-HTTPS)
+# pour les environnements de développement local
+# ============================================
+
+--- a/agent/agent.py
++++ b/agent/agent.py
+@@ -1,6 +1,7 @@
+ import os
+ import json
+ import requests
++from requests.adapters import HTTPAdapter
+ 
+ class Agent:
+     def __init__(self, config):
+@@ -15,7 +16,13 @@ class Agent:
+         """Send request to Press server"""
+         url = f"{self.press_url}{endpoint}"
+         
+-        # Use HTTP for local development
++        # Create session with retry
++        session = requests.Session()
++        
++        # Disable SSL verification for local development
++        verify_ssl = os.environ.get('VERIFY_SSL', 'false').lower() == 'true'
++        
+         try:
+-            response = requests.request(method, url, json=data, timeout=30)
++            response = session.request(method, url, json=data, timeout=30, verify=verify_ssl)
+             return response.json()
+         except requests.exceptions.RequestException as e:
+             return {"error": str(e)}
+
+--- a/agent/job.py
++++ b/agent/job.py
+@@ -1,5 +1,6 @@
+ import os
+ import redis
++import json
+ 
+ class Job:
+     def __init__(self, config):
+@@ -8,8 +9,10 @@ class Job:
+     
+     def get_redis_connection(self):
+         """Get Redis connection with fallback"""
+-        host = self.config.get('redis_host', 'localhost')
+-        port = self.config.get('redis_port', 6379)
++        # Use environment variable or config
++        host = os.environ.get('REDIS_HOST', self.config.get('redis_host', 'redis-queue'))
++        port = int(os.environ.get('REDIS_PORT', self.config.get('redis_port', 6379)))
++        
+         return redis.Redis(host=host, port=port, decode_responses=True)

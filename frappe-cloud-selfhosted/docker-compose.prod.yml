@@ -1,0 +1,484 @@
+# ============================================
+# Frappe Cloud Self-Hosted - Docker Compose
+# Version: 1.0.0
+# Frappe: v16 | Press: v16
+# ============================================
+
+name: frappe-cloud
+
+networks:
+  frontend:
+    name: frappe-cloud-frontend
+  backend:
+    name: frappe-cloud-backend
+
+volumes:
+  mariadb-data:
+  redis-cache-data:
+  redis-queue-data:
+  minio-data:
+  press-sites:
+  press-logs:
+  traefik-certs:
+  lago-storage:
+  keycloak-data:
+
+services:
+  # ==========================================
+  # REVERSE PROXY - Traefik v3
+  # ==========================================
+  traefik:
+    image: docker.io/traefik:v3.2
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=frappe-cloud-frontend"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # Redirection HTTP → HTTPS (activer en production)
+      # - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      # - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      # Let's Encrypt (activer en production)
+      # - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      # - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      # - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--log.level=INFO"
+    ports:
+      - "${HTTP_PORT:-30080}:80"
+      - "${HTTPS_PORT:-30443}:443"
+      - "${TRAEFIK_DASHBOARD_PORT:-30008}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./docker/traefik/dynamic:/etc/traefik/dynamic:ro
+      - traefik-certs:/letsencrypt
+    networks:
+      - frontend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+
+  # ==========================================
+  # DATABASE - MariaDB 11
+  # ==========================================
+  mariadb:
+    image: docker.io/mariadb:11.4
+    container_name: mariadb
+    restart: unless-stopped
+    command:
+      - "--character-set-server=utf8mb4"
+      - "--collation-server=utf8mb4_unicode_ci"
+      - "--skip-character-set-client-handshake"
+      - "--skip-innodb-read-only-compressed"
+      - "--innodb-buffer-pool-size=512M"
+      - "--innodb-log-file-size=128M"
+      - "--max-connections=500"
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-password}
+      MARIADB_DATABASE: press
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "no"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # CACHE - Redis
+  # ==========================================
+  redis-cache:
+    image: docker.io/redis:7.4-alpine
+    container_name: redis-cache
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-cache-data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-queue:
+    image: docker.io/redis:7.4-alpine
+    container_name: redis-queue
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-queue-data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # OBJECT STORAGE - MinIO
+  # ==========================================
+  minio:
+    image: docker.io/minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      # Console MinIO
+      - "traefik.http.routers.minio-console.rule=Host(`storage.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.minio-console.entrypoints=web"
+      - "traefik.http.routers.minio-console.service=minio-console"
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+      # API MinIO
+      - "traefik.http.routers.minio-api.rule=Host(`s3.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.minio-api.entrypoints=web"
+      - "traefik.http.routers.minio-api.service=minio-api"
+      - "traefik.http.services.minio-api.loadbalancer.server.port=9000"
+
+  # ==========================================
+  # FRAPPE PRESS - Main Application
+  # ==========================================
+  press:
+    build:
+      context: ./docker/press
+      dockerfile: Dockerfile
+      args:
+        FRAPPE_VERSION: v16
+        PRESS_VERSION: v16
+    container_name: press
+    restart: unless-stopped
+    environment:
+      # Site configuration
+      FRAPPE_SITE_NAME: ${FRAPPE_SITE_NAME:-cloud.localhost}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      
+      # Database
+      DB_HOST: ${MARIADB_HOST:-mariadb}
+      DB_PORT: ${MARIADB_PORT:-3306}
+      DB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-password}
+      
+      # Redis
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+      
+      # MinIO
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      
+      # Misc
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-changeme_encryption_key_32chars_}
+    volumes:
+      - press-sites:/home/frappe/frappe-bench/sites
+      - press-logs:/home/frappe/frappe-bench/logs
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/method/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.press.rule=Host(`cloud.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.press.entrypoints=web"
+      - "traefik.http.routers.press.service=press"
+      - "traefik.http.services.press.loadbalancer.server.port=8000"
+
+  # ==========================================
+  # FRAPPE AGENT - Server Management
+  # ==========================================
+  agent:
+    build:
+      context: ./docker/agent
+      dockerfile: Dockerfile
+    container_name: agent
+    restart: unless-stopped
+    privileged: true
+    environment:
+      AGENT_PASSWORD: ${AGENT_PASSWORD:-agent_password}
+      REDIS_HOST: redis-queue
+      REDIS_PORT: 6379
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - press-sites:/home/frappe/frappe-bench/sites
+      - press-logs:/home/frappe/frappe-bench/logs
+    networks:
+      - backend
+    ports:
+      - "${AGENT_PORT:-25052}:25052"
+    depends_on:
+      - press
+      - redis-queue
+
+  # ==========================================
+  # BACKGROUND WORKERS
+  # ==========================================
+  press-worker-default:
+    build:
+      context: ./docker/press
+      dockerfile: Dockerfile
+    container_name: press-worker-default
+    restart: unless-stopped
+    command: ["bench", "worker", "--queue", "default"]
+    environment:
+      DB_HOST: ${MARIADB_HOST:-mariadb}
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+    volumes:
+      - press-sites:/home/frappe/frappe-bench/sites
+      - press-logs:/home/frappe/frappe-bench/logs
+    networks:
+      - backend
+    depends_on:
+      press:
+        condition: service_healthy
+
+  press-worker-short:
+    build:
+      context: ./docker/press
+      dockerfile: Dockerfile
+    container_name: press-worker-short
+    restart: unless-stopped
+    command: ["bench", "worker", "--queue", "short"]
+    environment:
+      DB_HOST: ${MARIADB_HOST:-mariadb}
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+    volumes:
+      - press-sites:/home/frappe/frappe-bench/sites
+      - press-logs:/home/frappe/frappe-bench/logs
+    networks:
+      - backend
+    depends_on:
+      press:
+        condition: service_healthy
+
+  press-worker-long:
+    build:
+      context: ./docker/press
+      dockerfile: Dockerfile
+    container_name: press-worker-long
+    restart: unless-stopped
+    command: ["bench", "worker", "--queue", "long"]
+    environment:
+      DB_HOST: ${MARIADB_HOST:-mariadb}
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+    volumes:
+      - press-sites:/home/frappe/frappe-bench/sites
+      - press-logs:/home/frappe/frappe-bench/logs
+    networks:
+      - backend
+    depends_on:
+      press:
+        condition: service_healthy
+
+  press-scheduler:
+    build:
+      context: ./docker/press
+      dockerfile: Dockerfile
+    container_name: press-scheduler
+    restart: unless-stopped
+    command: ["bench", "schedule"]
+    environment:
+      DB_HOST: ${MARIADB_HOST:-mariadb}
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+    volumes:
+      - press-sites:/home/frappe/frappe-bench/sites
+      - press-logs:/home/frappe/frappe-bench/logs
+    networks:
+      - backend
+    depends_on:
+      press:
+        condition: service_healthy
+
+  # ==========================================
+  # BILLING - Lago
+  # ==========================================
+  lago-db:
+    image: docker.io/postgres:16-alpine
+    container_name: lago-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lago
+      POSTGRES_PASSWORD: ${LAGO_DB_PASSWORD:-lago_password}
+      POSTGRES_DB: lago
+    volumes:
+      - lago-storage:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lago"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  lago-redis:
+    image: docker.io/redis:7.4-alpine
+    container_name: lago-redis
+    restart: unless-stopped
+    networks:
+      - backend
+
+  lago-api:
+    image: docker.io/getlago/api:v1.22.2
+    container_name: lago-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://lago:${LAGO_DB_PASSWORD:-lago_password}@lago-db:5432/lago
+      REDIS_URL: redis://lago-redis:6379
+      SECRET_KEY_BASE: ${LAGO_SECRET_KEY:-changeme_lago_secret_key_64chars}
+      LAGO_API_URL: http://lago-api:3000
+      LAGO_PDF_URL: http://lago-pdf:3000
+      RSA_PRIVATE_KEY: ${LAGO_RSA_PRIVATE_KEY:-}
+      LAGO_DISABLE_SIGNUP: "false"
+      RAILS_ENV: production
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      lago-db:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lago-api.rule=Host(`billing-api.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.lago-api.entrypoints=web"
+      - "traefik.http.services.lago-api.loadbalancer.server.port=3000"
+
+  lago-front:
+    image: docker.io/getlago/front:v1.22.2
+    container_name: lago-front
+    restart: unless-stopped
+    environment:
+      API_URL: http://billing-api.${DOMAIN:-localhost}
+      APP_ENV: production
+    networks:
+      - frontend
+    depends_on:
+      - lago-api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lago-front.rule=Host(`billing.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.lago-front.entrypoints=web"
+      - "traefik.http.services.lago-front.loadbalancer.server.port=80"
+
+  lago-worker:
+    image: docker.io/getlago/api:v1.22.2
+    container_name: lago-worker
+    restart: unless-stopped
+    command: ["./scripts/start.worker.sh"]
+    environment:
+      DATABASE_URL: postgresql://lago:${LAGO_DB_PASSWORD:-lago_password}@lago-db:5432/lago
+      REDIS_URL: redis://lago-redis:6379
+      SECRET_KEY_BASE: ${LAGO_SECRET_KEY:-changeme_lago_secret_key_64chars}
+      LAGO_API_URL: http://lago-api:3000
+      RAILS_ENV: production
+    networks:
+      - backend
+    depends_on:
+      - lago-api
+
+  lago-clock:
+    image: docker.io/getlago/api:v1.22.2
+    container_name: lago-clock
+    restart: unless-stopped
+    command: ["./scripts/start.clock.sh"]
+    environment:
+      DATABASE_URL: postgresql://lago:${LAGO_DB_PASSWORD:-lago_password}@lago-db:5432/lago
+      REDIS_URL: redis://lago-redis:6379
+      SECRET_KEY_BASE: ${LAGO_SECRET_KEY:-changeme_lago_secret_key_64chars}
+      RAILS_ENV: production
+    networks:
+      - backend
+    depends_on:
+      - lago-api
+
+  lago-pdf:
+    image: docker.io/getlago/lago-gotenberg:7
+    container_name: lago-pdf
+    restart: unless-stopped
+    networks:
+      - backend
+
+  # ==========================================
+  # SSO - Keycloak
+  # ==========================================
+  keycloak:
+    image: docker.io/quay.io/keycloak/keycloak:26.0
+    container_name: keycloak
+    restart: unless-stopped
+    command: ["start-dev"]
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_password}
+      KC_PROXY: edge
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      - keycloak-db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.keycloak.rule=Host(`auth.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.keycloak.entrypoints=web"
+      - "traefik.http.services.keycloak.loadbalancer.server.port=8080"
+
+  keycloak-db:
+    image: docker.io/postgres:16-alpine
+    container_name: keycloak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_password}
+      POSTGRES_DB: keycloak
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

@@ -1,93 +1,289 @@
-[![Build Stable](https://github.com/frappe/frappe_docker/actions/workflows/build_stable.yml/badge.svg)](https://github.com/frappe/frappe_docker/actions/workflows/build_stable.yml)
-[![Build Develop](https://github.com/frappe/frappe_docker/actions/workflows/build_develop.yml/badge.svg)](https://github.com/frappe/frappe_docker/actions/workflows/build_develop.yml)
+# 🏗️ Frappe Cloud - Local SaaS Platform
 
-Everything about [Frappe](https://github.com/frappe/frappe) and [ERPNext](https://github.com/frappe/erpnext) in containers.
+> Deploy Frappe/ERPNext locally with Podman - No cloud providers needed!
 
-# Getting Started
+## 📋 Table of Contents
 
-**New to Frappe Docker?** Read the [Getting Started Guide](docs/getting-started.md) for a comprehensive overview of repository structure, development workflow, custom apps, Docker concepts, and quick start examples.
+- [Overview](#-overview)
+- [Prerequisites](#-prerequisites)
+- [Quick Start](#-quick-start)
+- [Architecture](#-architecture)
+- [Services](#-services)
+- [Site Management](#-site-management)
+- [Backup & Restore](#-backup--restore)
+- [Troubleshooting](#-troubleshooting)
 
-To get started you need [Docker](https://docs.docker.com/get-docker/), [docker-compose](https://docs.docker.com/compose/), and [git](https://docs.github.com/en/get-started/getting-started-with-git/set-up-git) setup on your machine. For Docker basics and best practices refer to Docker's [documentation](http://docs.docker.com).
+## 🎯 Overview
 
-Once completed, chose one of the following two sections for next steps.
+This project provides a complete local Frappe/ERPNext platform using:
 
-### Try in Play With Docker
+| Component | Purpose | URL |
+|-----------|---------|-----|
+| **Traefik** | Reverse proxy & routing | http://traefik.localhost |
+| **MinIO** | S3-compatible storage | http://minio.localhost |
+| **Registry** | Container image registry | http://registry.localhost |
+| **MariaDB** | Database server | Internal |
+| **Redis** | Cache & Queue | Internal |
+| **Frappe** | Backend framework | http://erp.localhost |
 
-To play in an already set up sandbox, in your browser, click the button below:
+## 📦 Prerequisites
 
-<a href="https://labs.play-with-docker.com/?stack=https://raw.githubusercontent.com/frappe/frappe_docker/main/pwd.yml">
-  <img src="https://raw.githubusercontent.com/play-with-docker/stacks/master/assets/images/button.png" alt="Try in PWD"/>
-</a>
+### Fedora/RHEL
+```bash
+# Install Podman & Compose
+sudo dnf install -y podman podman-compose
 
-### Try on your Dev environment
-
-First clone the repo:
-
-```sh
-git clone https://github.com/frappe/frappe_docker
-cd frappe_docker
+# Enable Podman socket (for rootless)
+systemctl --user enable --now podman.socket
 ```
 
-Then run: `docker compose -f pwd.yml up -d`
+### Ubuntu/Debian
+```bash
+# Install Podman
+sudo apt install -y podman podman-compose
 
-### To run on ARM64 architecture follow this instructions
+# Enable Podman socket
+systemctl --user enable --now podman.socket
+```
 
-After you clone the repo and `cd frappe_docker`, run this command to build multi-architecture images specifically for ARM64.
+### Verify Installation
+```bash
+podman --version
+podman-compose --version
+```
 
-`docker buildx bake --no-cache --set "*.platform=linux/arm64"`
+## 🚀 Quick Start
 
-and then
+### 1. Clone & Setup
+```bash
+cd /path/to/frappe_docker_git
 
-- add `platform: linux/arm64` to all services in the `pwd.yml`
-- replace the current specified versions of erpnext image on `pwd.yml` with `:latest`
+# Copy environment file
+cp .env.example .env
 
-Then run: `docker compose -f pwd.yml up -d`
+# Edit with your values
+nano .env
+```
 
-## Final steps
+### 2. Configure /etc/hosts
+Add these entries to `/etc/hosts`:
+```
+127.0.0.1 traefik.localhost
+127.0.0.1 minio.localhost
+127.0.0.1 s3.localhost
+127.0.0.1 registry.localhost
+127.0.0.1 registry-ui.localhost
+127.0.0.1 erp.localhost
+```
 
-Wait for 5 minutes for ERPNext site to be created or check `create-site` container logs before opening browser on port 8080. (username: `Administrator`, password: `admin`)
+Or use the helper:
+```bash
+echo "127.0.0.1 traefik.localhost minio.localhost s3.localhost registry.localhost registry-ui.localhost erp.localhost" | sudo tee -a /etc/hosts
+```
 
-If you ran in a Dev Docker environment, to view container logs: `docker compose -f pwd.yml logs -f create-site`. Don't worry about some of the initial error messages, some services take a while to become ready, and then they go away.
+### 3. Start Services
+```bash
+# Make scripts executable
+chmod +x scripts/*.sh
 
-# Documentation
+# Start all services
+podman compose up -d
 
-### [Getting Started Guide](docs/getting-started.md)
+# Watch logs
+podman compose logs -f
+```
 
-### [Frequently Asked Questions](https://github.com/frappe/frappe_docker/wiki/Frequently-Asked-Questions)
+### 4. Create Your First Site
+```bash
+# Wait for services to be ready (check configurator logs)
+podman logs -f configurator
 
-### [Production](#production)
+# Create site (once configurator completes)
+./scripts/create-site.sh erp.localhost admin
+```
 
-- [List of containers](docs/container-setup/01-overview.md)
-- [Single Compose Setup](docs/single-compose-setup.md)
-- [Environment Variables](docs/container-setup/env-variables.md)
-- [Single Server Example](docs/single-server-example.md)
-- [Setup Options](docs/setup-options.md)
-- [Site Operations](docs/site-operations.md)
-- [Backup and Push Cron Job](docs/backup-and-push-cronjob.md)
-- [Port Based Multi Tenancy](docs/port-based-multi-tenancy.md)
-- [Migrate from multi-image setup](docs/migrate-from-multi-image-setup.md)
-- [running on linux/mac](docs/setup_for_linux_mac.md)
-- [TLS for local deployment](docs/tls-for-local-deployment.md)
+### 5. Access Your Site
+Open http://erp.localhost in your browser
+- **Username:** Administrator
+- **Password:** admin (or your custom password)
 
-### [Custom Images](#custom-images)
+## 🏛️ Architecture
 
-- [Custom Apps](docs/container-setup/02-build-setup.md)
-- [Build Version 10 Images](docs/build-version-10-images.md)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         TRAEFIK                                 │
+│                    (Reverse Proxy)                              │
+│              http://traefik.localhost:80                        │
+└─────────────────────────────────────────────────────────────────┘
+         │              │              │              │
+         ▼              ▼              ▼              ▼
+┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+│   MinIO     │ │  Registry   │ │   Frappe    │ │  WebSocket  │
+│ (S3 Store)  │ │  (Images)   │ │  (Backend)  │ │ (Socket.IO) │
+└─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
+                                       │
+                    ┌──────────────────┼──────────────────┐
+                    ▼                  ▼                  ▼
+             ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+             │  MariaDB    │   │ Redis Cache │   │ Redis Queue │
+             │ (Database)  │   │             │   │             │
+             └─────────────┘   └─────────────┘   └─────────────┘
+```
 
-### [Development](#development)
+## 🔧 Services
 
-- [Development using containers](docs/development.md)
-- [Bench Console and VSCode Debugger](docs/bench-console-and-vscode-debugger.md)
-- [Connect to localhost services](docs/connect-to-localhost-services-from-containers-for-local-app-development.md)
+### Infrastructure (`compose/infra.yaml`)
 
-### [Troubleshoot](docs/troubleshoot.md)
+| Service | Image | Purpose |
+|---------|-------|---------|
+| traefik | traefik:v3.2 | Reverse proxy, TLS, routing |
+| minio | minio/minio | S3-compatible object storage |
+| registry | registry:2 | Docker/Podman image registry |
+| registry-ui | joxit/docker-registry-ui | Web UI for registry |
+| coredns | coredns/coredns | Local DNS (optional) |
 
-# Contributing
+### Frappe Stack (`compose/frappe.yaml`)
 
-If you want to contribute to this repo refer to [CONTRIBUTING.md](CONTRIBUTING.md)
+| Service | Image | Purpose |
+|---------|-------|---------|
+| mariadb | mariadb:10.11 | Database server |
+| redis-cache | redis:7-alpine | Caching |
+| redis-queue | redis:7-alpine | Background jobs |
+| frappe-backend | frappe/erpnext:v15 | Gunicorn (Python) |
+| frappe-websocket | frappe/erpnext:v15 | Socket.IO (Node.js) |
+| frappe-scheduler | frappe/erpnext:v15 | Scheduled tasks |
+| frappe-worker-short | frappe/erpnext:v15 | Short queue jobs |
+| frappe-worker-long | frappe/erpnext:v15 | Long queue jobs |
+| configurator | frappe/erpnext:v15 | One-time setup |
 
-This repository is only for container related stuff. You also might want to contribute to:
+## 📁 Project Structure
 
-- [Frappe framework](https://github.com/frappe/frappe#contributing),
-- [ERPNext](https://github.com/frappe/erpnext#contributing),
-- [Frappe Bench](https://github.com/frappe/bench).
+```
+frappe_docker_git/
+├── compose.yaml              # Main compose file (includes others)
+├── .env.example              # Environment template
+├── compose/
+│   ├── infra.yaml           # Infrastructure services
+│   └── frappe.yaml          # Frappe/ERPNext services
+├── config/
+│   ├── traefik/
+│   │   └── dynamic.yaml     # Traefik routing rules
+│   └── coredns/
+│       └── Corefile         # DNS configuration
+└── scripts/
+    ├── create-site.sh       # Create new Frappe site
+    ├── backup.sh            # Backup sites to MinIO
+    └── init-minio.sh        # Initialize MinIO buckets
+```
+
+## 🌐 Site Management
+
+### Create a New Site
+```bash
+# Basic site with ERPNext
+./scripts/create-site.sh mysite.localhost admin
+
+# Site without ERPNext
+./scripts/create-site.sh mysite.localhost admin no
+```
+
+### List Sites
+```bash
+podman exec frappe-backend ls /home/frappe/frappe-bench/sites
+```
+
+### Switch Default Site
+```bash
+podman exec frappe-backend bench use mysite.localhost
+```
+
+### Access Bench Console
+```bash
+podman exec -it frappe-backend bench console
+```
+
+### Run Bench Commands
+```bash
+podman exec frappe-backend bench --site mysite.localhost migrate
+podman exec frappe-backend bench --site mysite.localhost clear-cache
+```
+
+## 💾 Backup & Restore
+
+### Backup
+```bash
+# Backup all sites
+./scripts/backup.sh all
+
+# Backup specific site
+./scripts/backup.sh mysite.localhost
+```
+
+### Restore
+```bash
+# Restore from backup file
+podman exec frappe-backend bench --site mysite.localhost restore /path/to/backup.sql.gz
+```
+
+## 🔍 Troubleshooting
+
+### Check Container Status
+```bash
+podman ps -a
+podman compose ps
+```
+
+### View Logs
+```bash
+# All logs
+podman compose logs -f
+
+# Specific service
+podman compose logs -f frappe-backend
+podman compose logs -f configurator
+```
+
+### Common Issues
+
+#### Podman Socket Not Found
+```bash
+# Enable user socket
+systemctl --user enable --now podman.socket
+
+# Verify
+ls -la /run/user/$(id -u)/podman/podman.sock
+```
+
+#### Permission Denied on Volumes
+```bash
+# Fix with :Z flag (SELinux)
+# Already included in compose files
+```
+
+#### Site Not Accessible
+1. Check /etc/hosts
+2. Verify Traefik is running: `podman logs traefik`
+3. Check Frappe backend: `podman logs frappe-backend`
+
+### Reset Everything
+```bash
+# Stop and remove all
+podman compose down -v
+
+# Remove all volumes
+podman volume prune -f
+
+# Start fresh
+podman compose up -d
+```
+
+## 📚 Additional Resources
+
+- [Frappe Documentation](https://frappeframework.com/docs)
+- [ERPNext Documentation](https://docs.erpnext.com)
+- [Traefik Documentation](https://doc.traefik.io/traefik/)
+- [Podman Documentation](https://docs.podman.io)
+
+## 📄 License
+
+MIT License - See [LICENSE](LICENSE) for details.

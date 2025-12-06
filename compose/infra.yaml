@@ -1,0 +1,193 @@
+# =============================================================================
+# FRAPPE CLOUD - INFRASTRUCTURE SERVICES
+# Traefik (Reverse Proxy) + MinIO (S3) + Registry (Container Images)
+# =============================================================================
+# PORT MAPPING (32000-32500 range):
+#   Traefik HTTP:      32080
+#   Traefik HTTPS:     32443
+#   Traefik Dashboard: 32088
+#   MinIO API:         32900
+#   MinIO Console:     32901
+#   Registry:          32500
+#   CoreDNS:           32053
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # TRAEFIK - Reverse Proxy & Load Balancer
+  # ---------------------------------------------------------------------------
+  frappe-cloud-traefik:
+    image: docker.io/traefik:v3.2
+    container_name: frappe-cloud-traefik
+    hostname: frappe-cloud-traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    command:
+      # API & Dashboard
+      - --api.dashboard=true
+      - --api.insecure=true
+      # Providers - File only (no Docker provider for Podman compatibility)
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      # Entrypoints
+      - --entrypoints.frappe-web.address=:80
+      - --entrypoints.frappe-websecure.address=:443
+      # Logs
+      - --log.level=INFO
+      - --accesslog=true
+    ports:
+      - "32080:80"
+      - "32443:443"
+      - "32088:8080"
+    volumes:
+      # Config (z for SELinux relabel) - path relative to main compose.yaml
+      - ../config/traefik:/etc/traefik/dynamic:z,ro
+      # Certificates
+      - frappe-cloud-traefik-certs:/certs
+    networks:
+      - frappe-cloud-proxy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.frappe-cloud-dashboard.rule=Host(`traefik.localhost`)
+      - traefik.http.routers.frappe-cloud-dashboard.service=api@internal
+      - traefik.http.routers.frappe-cloud-dashboard.entrypoints=frappe-web
+
+  # ---------------------------------------------------------------------------
+  # MINIO - S3-Compatible Object Storage
+  # ---------------------------------------------------------------------------
+  frappe-cloud-minio:
+    image: docker.io/minio/minio:latest
+    container_name: frappe-cloud-minio
+    hostname: frappe-cloud-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "32900:9000"
+      - "32901:9001"
+    volumes:
+      - frappe-cloud-minio-data:/data
+    networks:
+      - frappe-cloud-proxy
+      - frappe-cloud-internal
+    labels:
+      - traefik.enable=true
+      # API
+      - traefik.http.routers.frappe-cloud-minio-api.rule=Host(`s3.localhost`)
+      - traefik.http.routers.frappe-cloud-minio-api.entrypoints=frappe-web
+      - traefik.http.routers.frappe-cloud-minio-api.service=frappe-cloud-minio-api
+      - traefik.http.services.frappe-cloud-minio-api.loadbalancer.server.port=9000
+      # Console
+      - traefik.http.routers.frappe-cloud-minio-console.rule=Host(`minio.localhost`)
+      - traefik.http.routers.frappe-cloud-minio-console.entrypoints=frappe-web
+      - traefik.http.routers.frappe-cloud-minio-console.service=frappe-cloud-minio-console
+      - traefik.http.services.frappe-cloud-minio-console.loadbalancer.server.port=9001
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # REGISTRY - Container Image Registry
+  # ---------------------------------------------------------------------------
+  frappe-cloud-registry:
+    image: docker.io/registry:2
+    container_name: frappe-cloud-registry
+    hostname: frappe-cloud-registry
+    restart: unless-stopped
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    ports:
+      - "32500:5000"
+    volumes:
+      - frappe-cloud-registry-data:/var/lib/registry
+    networks:
+      - frappe-cloud-proxy
+      - frappe-cloud-internal
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.frappe-cloud-registry.rule=Host(`registry.localhost`)
+      - traefik.http.routers.frappe-cloud-registry.entrypoints=frappe-web
+      - traefik.http.services.frappe-cloud-registry.loadbalancer.server.port=5000
+
+  # ---------------------------------------------------------------------------
+  # REGISTRY UI - Web interface for Registry
+  # ---------------------------------------------------------------------------
+  frappe-cloud-registry-ui:
+    image: docker.io/joxit/docker-registry-ui:latest
+    container_name: frappe-cloud-registry-ui
+    hostname: frappe-cloud-registry-ui
+    restart: unless-stopped
+    environment:
+      SINGLE_REGISTRY: "true"
+      REGISTRY_TITLE: "Frappe Cloud Registry"
+      # Use localhost URL accessible from browser
+      REGISTRY_URL: http://localhost:32500
+      DELETE_IMAGES: "true"
+      NGINX_PROXY_PASS_URL: http://frappe-cloud-registry:5000
+    networks:
+      - frappe-cloud-proxy
+      - frappe-cloud-internal
+    depends_on:
+      - frappe-cloud-registry
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.frappe-cloud-registry-ui.rule=Host(`registry-ui.localhost`)
+      - traefik.http.routers.frappe-cloud-registry-ui.entrypoints=frappe-web
+      - traefik.http.services.frappe-cloud-registry-ui.loadbalancer.server.port=80
+
+  # ---------------------------------------------------------------------------
+  # COREDNS - Local DNS (Optional - use profile: dns)
+  # ---------------------------------------------------------------------------
+  frappe-cloud-coredns:
+    image: docker.io/coredns/coredns:latest
+    container_name: frappe-cloud-coredns
+    hostname: frappe-cloud-coredns
+    restart: unless-stopped
+    profiles:
+      - dns
+    command: -conf /etc/coredns/Corefile
+    volumes:
+      - ./config/coredns:/etc/coredns:ro
+    ports:
+      - "32053:53/udp"
+      - "32053:53/tcp"
+    networks:
+      - frappe-cloud-internal
+
+  # ---------------------------------------------------------------------------
+  # SAAS MANAGER - Web UI for site management
+  # ---------------------------------------------------------------------------
+  frappe-cloud-saas-manager:
+    build:
+      context: ../saas-manager
+      dockerfile: Dockerfile
+    image: frappe-cloud-saas-manager:latest
+    container_name: frappe-cloud-saas-manager
+    hostname: frappe-cloud-saas-manager
+    restart: unless-stopped
+    environment:
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-admin}
+    ports:
+      - "32100:8000"
+    volumes:
+      # Config Traefik pour MAJ dynamique des routes
+      - ../config/traefik:/app/config/traefik:z
+      # Données persistantes (sites.json)
+      - frappe-cloud-saas-data:/app/data
+      # Socket Podman pour communiquer avec le host
+      - /run/user/1000/podman/podman.sock:/var/run/podman.sock:ro
+    networks:
+      - frappe-cloud-proxy
+      - frappe-cloud-internal
+    depends_on:
+      - frappe-cloud-traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.frappe-cloud-saas-manager.rule=Host(`cloud.localhost`)
+      - traefik.http.routers.frappe-cloud-saas-manager.entrypoints=frappe-web
+      - traefik.http.services.frappe-cloud-saas-manager.loadbalancer.server.port=8000

@@ -1,0 +1,474 @@
+# ============================================================
+# FRAPPE CLOUD SELF-HOSTED - Docker Compose Organisé
+# ============================================================
+# Architecture en groupes logiques:
+#   - Groupe INFRA: Base de données et cache
+#   - Groupe FRAPPE: Press et workers
+#   - Groupe LAGO: Facturation
+#   - Groupe PROXY: Traefik
+# ============================================================
+# Ports utilisés: 30080 (HTTP), 30443 (HTTPS), 30008 (Traefik)
+# ============================================================
+
+name: fcs
+
+# ============================================================
+# RÉSEAUX
+# ============================================================
+networks:
+  fcs-frontend:
+    name: fcs-frontend
+  fcs-backend:
+    name: fcs-backend
+
+# ============================================================
+# VOLUMES
+# ============================================================
+volumes:
+  # Infrastructure
+  fcs-mariadb-data:
+  fcs-redis-cache-data:
+  fcs-redis-queue-data:
+  fcs-minio-data:
+  # Frappe/Press
+  fcs-frappe-sites:
+  fcs-frappe-logs:
+  # Lago
+  fcs-lago-postgres-data:
+  fcs-lago-redis-data:
+  # Keycloak
+  fcs-keycloak-postgres-data:
+  # Proxy
+  fcs-traefik-certs:
+
+# ============================================================
+# CONFIGURATION COMMUNE
+# ============================================================
+x-frappe-common: &frappe-common
+  image: docker.io/frappe/erpnext:v15
+  environment: &frappe-env
+    DB_HOST: fcs-mariadb
+    DB_PORT: "3306"
+    REDIS_CACHE: redis://fcs-redis-cache:6379
+    REDIS_QUEUE: redis://fcs-redis-queue:6379
+    SOCKETIO_PORT: "9000"
+  volumes:
+    - fcs-frappe-sites:/home/frappe/frappe-bench/sites
+    - fcs-frappe-logs:/home/frappe/frappe-bench/logs
+  networks:
+    - fcs-backend
+  restart: unless-stopped
+
+x-lago-common: &lago-common
+  environment: &lago-env
+    DATABASE_URL: postgresql://lago:${LAGO_DB_PASSWORD:-lago_secret_2024}@fcs-lago-postgres:5432/lago
+    REDIS_URL: redis://fcs-lago-redis:6379
+    RAILS_ENV: production
+    SECRET_KEY_BASE: ${LAGO_SECRET_KEY}
+    ENCRYPTION_PRIMARY_KEY: ${LAGO_ENCRYPTION_KEY}
+    ENCRYPTION_DETERMINISTIC_KEY: ${LAGO_DET_KEY}
+    ENCRYPTION_KEY_DERIVATION_SALT: ${LAGO_SALT}
+    LAGO_RSA_PRIVATE_KEY: ${LAGO_RSA_PRIVATE_KEY}
+    LAGO_LICENSE: ""
+    LAGO_CLOUD: "false"
+  networks:
+    - fcs-backend
+  restart: unless-stopped
+
+# ============================================================
+# SERVICES
+# ============================================================
+services:
+
+  # ==========================================================
+  # GROUPE: PROXY (Traefik)
+  # ==========================================================
+  fcs-traefik:
+    image: docker.io/traefik:v3.2
+    container_name: fcs-traefik
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-30080}:80"
+      - "${HTTPS_PORT:-30443}:443"
+      - "${TRAEFIK_DASHBOARD_PORT:-30008}:8080"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+      - fcs-traefik-certs:/letsencrypt
+    networks:
+      - fcs-frontend
+      - fcs-backend
+    labels:
+      - "fcs.group=proxy"
+      - "fcs.service=traefik"
+
+  # ==========================================================
+  # GROUPE: INFRASTRUCTURE (Databases & Cache)
+  # ==========================================================
+  fcs-mariadb:
+    image: docker.io/mariadb:11.4
+    container_name: fcs-mariadb
+    restart: unless-stopped
+    command:
+      - "--character-set-server=utf8mb4"
+      - "--collation-server=utf8mb4_unicode_ci"
+      - "--skip-character-set-client-handshake"
+      - "--skip-innodb-read-only-compressed"
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: _global_search
+    volumes:
+      - fcs-mariadb-data:/var/lib/mysql
+    networks:
+      - fcs-backend
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    labels:
+      - "fcs.group=infra"
+      - "fcs.service=mariadb"
+
+  fcs-redis-cache:
+    image: docker.io/redis:7.4-alpine
+    container_name: fcs-redis-cache
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - fcs-redis-cache-data:/data
+    networks:
+      - fcs-backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    labels:
+      - "fcs.group=infra"
+      - "fcs.service=redis-cache"
+
+  fcs-redis-queue:
+    image: docker.io/redis:7.4-alpine
+    container_name: fcs-redis-queue
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - fcs-redis-queue-data:/data
+    networks:
+      - fcs-backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    labels:
+      - "fcs.group=infra"
+      - "fcs.service=redis-queue"
+
+  fcs-minio:
+    image: docker.io/minio/minio:latest
+    container_name: fcs-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    volumes:
+      - fcs-minio-data:/data
+    networks:
+      - fcs-frontend
+      - fcs-backend
+    labels:
+      - "fcs.group=infra"
+      - "fcs.service=minio"
+
+  # ==========================================================
+  # GROUPE: FRAPPE/PRESS
+  # ==========================================================
+  fcs-frappe-backend:
+    <<: *frappe-common
+    container_name: fcs-frappe-backend
+    command: ["bench", "serve", "--port", "8000"]
+    networks:
+      - fcs-frontend
+      - fcs-backend
+    depends_on:
+      fcs-mariadb:
+        condition: service_healthy
+      fcs-redis-cache:
+        condition: service_healthy
+      fcs-redis-queue:
+        condition: service_healthy
+    labels:
+      - "fcs.group=frappe"
+      - "fcs.service=backend"
+
+  fcs-frappe-worker-default:
+    <<: *frappe-common
+    container_name: fcs-frappe-worker-default
+    command: ["bench", "worker", "--queue", "default"]
+    depends_on:
+      fcs-mariadb:
+        condition: service_healthy
+      fcs-redis-queue:
+        condition: service_healthy
+    labels:
+      - "fcs.group=frappe"
+      - "fcs.service=worker-default"
+
+  fcs-frappe-worker-short:
+    <<: *frappe-common
+    container_name: fcs-frappe-worker-short
+    command: ["bench", "worker", "--queue", "short"]
+    depends_on:
+      fcs-mariadb:
+        condition: service_healthy
+      fcs-redis-queue:
+        condition: service_healthy
+    labels:
+      - "fcs.group=frappe"
+      - "fcs.service=worker-short"
+
+  fcs-frappe-worker-long:
+    <<: *frappe-common
+    container_name: fcs-frappe-worker-long
+    command: ["bench", "worker", "--queue", "long"]
+    depends_on:
+      fcs-mariadb:
+        condition: service_healthy
+      fcs-redis-queue:
+        condition: service_healthy
+    labels:
+      - "fcs.group=frappe"
+      - "fcs.service=worker-long"
+
+  fcs-frappe-scheduler:
+    <<: *frappe-common
+    container_name: fcs-frappe-scheduler
+    command: ["bench", "schedule"]
+    depends_on:
+      fcs-mariadb:
+        condition: service_healthy
+      fcs-redis-queue:
+        condition: service_healthy
+    labels:
+      - "fcs.group=frappe"
+      - "fcs.service=scheduler"
+
+  # ==========================================================
+  # GROUPE: LAGO BILLING
+  # ==========================================================
+  fcs-lago-postgres:
+    image: docker.io/postgres:16-alpine
+    container_name: fcs-lago-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lago
+      POSTGRES_PASSWORD: ${LAGO_DB_PASSWORD:-lago_secret_2024}
+      POSTGRES_DB: lago
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - fcs-lago-postgres-data:/var/lib/postgresql/data
+    networks:
+      - fcs-backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lago -d lago"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    labels:
+      - "fcs.group=lago"
+      - "fcs.service=postgres"
+
+  fcs-lago-redis:
+    image: docker.io/redis:7.4-alpine
+    container_name: fcs-lago-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - fcs-lago-redis-data:/data
+    networks:
+      - fcs-backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    labels:
+      - "fcs.group=lago"
+      - "fcs.service=redis"
+
+  fcs-lago-api:
+    image: docker.io/getlago/api:v1.20.1
+    container_name: fcs-lago-api
+    <<: *lago-common
+    environment:
+      <<: *lago-env
+      LAGO_API_URL: http://fcs-lago-api:3000
+      LAGO_FRONT_URL: ${LAGO_FRONT_URL:-http://billing.localhost:30080}
+      RAILS_LOG_TO_STDOUT: "true"
+    depends_on:
+      fcs-lago-postgres:
+        condition: service_healthy
+      fcs-lago-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    labels:
+      - "fcs.group=lago"
+      - "fcs.service=api"
+
+  fcs-lago-worker:
+    image: docker.io/getlago/api:v1.20.1
+    container_name: fcs-lago-worker
+    <<: *lago-common
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    depends_on:
+      fcs-lago-api:
+        condition: service_healthy
+    labels:
+      - "fcs.group=lago"
+      - "fcs.service=worker"
+
+  fcs-lago-clock:
+    image: docker.io/getlago/api:v1.20.1
+    container_name: fcs-lago-clock
+    <<: *lago-common
+    command: ["bundle", "exec", "clockwork", "config/clock.rb"]
+    depends_on:
+      fcs-lago-api:
+        condition: service_healthy
+    labels:
+      - "fcs.group=lago"
+      - "fcs.service=clock"
+
+  fcs-lago-frontend:
+    image: docker.io/getlago/front:v1.20.1
+    container_name: fcs-lago-frontend
+    restart: unless-stopped
+    privileged: true
+    environment:
+      API_URL: http://api.billing.localhost:30080
+      APP_ENV: production
+      LAGO_DISABLE_SIGNUP: "false"
+      # OAuth via Keycloak - SSO Integration
+      LAGO_OAUTH_PROXY_URL: http://oauth.billing.localhost:30080
+    networks:
+      - fcs-frontend
+      - fcs-backend
+    depends_on:
+      fcs-lago-api:
+        condition: service_healthy
+    labels:
+      - "fcs.group=lago"
+      - "fcs.service=frontend"
+
+  # OAuth2 Proxy for Lago SSO with Keycloak
+  fcs-lago-oauth-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    container_name: fcs-lago-oauth-proxy
+    restart: unless-stopped
+    command:
+      - --http-address=0.0.0.0:4180
+      - --upstream=http://fcs-lago-frontend:80
+      - --provider=oidc
+      - --provider-display-name=Keycloak
+      - --client-id=lago-billing
+      - --client-secret=${LAGO_OAUTH_CLIENT_SECRET:-ixSfrGvoWF3dp2RgB1gtzchGM85UkN2M}
+      # Skip discovery to manually set URLs (internal vs external)
+      - --skip-oidc-discovery=true
+      # URLs that browser should use (external)
+      - --oidc-issuer-url=http://auth.localhost:30080/realms/frappe-cloud
+      - --login-url=http://auth.localhost:30080/realms/frappe-cloud/protocol/openid-connect/auth
+      - --redeem-url=http://fcs-keycloak:8080/realms/frappe-cloud/protocol/openid-connect/token
+      - --oidc-jwks-url=http://fcs-keycloak:8080/realms/frappe-cloud/protocol/openid-connect/certs
+      - --profile-url=http://fcs-keycloak:8080/realms/frappe-cloud/protocol/openid-connect/userinfo
+      - --redirect-url=http://oauth.billing.localhost:30080/oauth2/callback
+      - --email-domain=*
+      - --cookie-secret=${LAGO_OAUTH_COOKIE_SECRET:-abcdef0123456789abcdef0123456789}
+      - --cookie-secure=false
+      - --skip-provider-button=false
+      - --pass-user-headers=true
+      - --pass-access-token=true
+      - --set-xauthrequest=true
+      - --whitelist-domain=.localhost:30080
+      - --insecure-oidc-allow-unverified-email=true
+      - --scope=openid email profile
+      # Support PKCE for Keycloak 26+
+      - --code-challenge-method=S256
+    networks:
+      - fcs-frontend
+      - fcs-backend
+    depends_on:
+      - fcs-lago-frontend
+      - fcs-keycloak
+    labels:
+      - "fcs.group=lago"
+      - "fcs.service=oauth-proxy"
+
+  # ==========================================================
+  # GROUPE: KEYCLOAK SSO
+  # ==========================================================
+  fcs-keycloak-postgres:
+    image: docker.io/postgres:16-alpine
+    container_name: fcs-keycloak-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_db_secret}
+      POSTGRES_DB: keycloak
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - fcs-keycloak-postgres-data:/var/lib/postgresql/data
+    networks:
+      - fcs-backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    labels:
+      - "fcs.group=keycloak"
+      - "fcs.service=postgres"
+
+  fcs-keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: fcs-keycloak
+    restart: unless-stopped
+    command: ["start-dev"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://fcs-keycloak-postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_db_secret}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Configurer l'URL externe pour l'issuer des tokens
+      KC_HOSTNAME: http://auth.localhost:30080
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+    networks:
+      - fcs-frontend
+      - fcs-backend
+    depends_on:
+      fcs-keycloak-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    labels:
+      - "fcs.group=keycloak"
+      - "fcs.service=keycloak"

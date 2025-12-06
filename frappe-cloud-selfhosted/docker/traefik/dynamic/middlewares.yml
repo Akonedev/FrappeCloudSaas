@@ -1,0 +1,65 @@
+# Traefik Dynamic Configuration
+# Middleware definitions
+
+http:
+  middlewares:
+    # Security headers
+    secure-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        customFrameOptionsValue: "SAMEORIGIN"
+        customResponseHeaders:
+          X-Robots-Tag: "noindex,nofollow,nosnippet,noarchive,notranslate,noimageindex"
+
+    # Rate limiting
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1s
+
+    # Compress responses
+    compress:
+      compress:
+        excludedContentTypes:
+          - text/event-stream
+
+    # Retry on failure
+    retry:
+      retry:
+        attempts: 3
+        initialInterval: 100ms
+
+    # Strip prefix for API routes
+    strip-api-prefix:
+      stripPrefix:
+        prefixes:
+          - "/api"
+
+    # Basic auth for admin routes
+    admin-auth:
+      basicAuth:
+        users:
+          - "admin:$apr1$xyz..."  # Generate with: htpasswd -nb admin password
+
+    # CORS for API
+    cors-headers:
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - OPTIONS
+          - PUT
+          - POST
+          - DELETE
+          - PATCH
+        accessControlAllowHeaders:
+          - "*"
+        accessControlAllowOriginList:
+          - "*"
+        accessControlMaxAge: 100
+        addVaryHeader: true
