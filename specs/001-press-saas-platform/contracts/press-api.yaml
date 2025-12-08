@@ -1,0 +1,94 @@
+openapi: 3.0.3
+info:
+  title: Press Manager API (Press SaaS)
+  version: 0.1.0
+  description: Minimal OpenAPI surface for the Press control-plane used by the platform
+servers:
+  - url: https://press.localhost:48543
+paths:
+  /api/sites:
+    get:
+      summary: List sites
+      responses:
+        '200':
+          description: Site list
+    post:
+      summary: Create a new site
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                display_name:
+                  type: string
+                apps:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '201':
+          description: Site created
+  /api/sites/{site_id}:
+    get:
+      summary: Get site details
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Site record
+  /api/sites/{site_id}/backup:
+    post:
+      summary: Trigger immediate backup for site
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Backup scheduled
+  /api/sites/{site_id}/restore:
+    post:
+      summary: Restore a site from backup
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                backup_id:
+                  type: string
+      responses:
+        '202':
+          description: Restore scheduled
+  /health:
+    get:
+      summary: Health check for Press manager
+      responses:
+        '200':
+          description: OK
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: []
