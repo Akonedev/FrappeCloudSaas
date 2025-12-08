@@ -31,6 +31,9 @@ Purpose: Core infrastructure pieces that MUST be in place before implementing us
 - [ ] T011 Implement Press Manager API scaffold `press/manager/app.py` with OpenAPI contract stub from `specs/001-press-saas-platform/contracts/press-api.yaml`
 - [ ] T012 [P] Add healthcheck endpoints for manager and workers (e.g., `/health`) and configure Compose healthchecks
 - [ ] T013 Configure environment management `.env.example` and `docker/compose.override.yml` for secret injection (documented in `docs/`)
+ - [ ] T047 Reconcile Keycloak port & Press Manager port across spec, plan, and compose files; add validation tests and CI check
+- [ ] T044 Implement soft-delete lifecycle for sites (FR-014): `press/manager/site_lifecycle.py`, `press/worker/lifecycle_worker.py`, tests `tests/unit/test_site_lifecycle.py` and integration tests
+
 
 Checkpoint: After these are implemented the infrastructure should stand up locally and the API scaffold should be reachable
 
@@ -146,6 +149,8 @@ Checkpoint: Backups created daily, retained 30 days, restore works for soft-dele
 - [ ] T039 [P] Add logging and monitoring scaffolding `press/monitoring/` (health & simple metrics)
 - [ ] T040 [P] Add documentation polish: finalize `specs/001-press-saas-platform/quickstart.md`, `README.md`, and operator playbooks
 - [ ] T041 Add end-to-end acceptance tests `tests/e2e/test_create_site_to_backup_to_restore.py`
+- [ ] T045 [P] Add secret-management checks and Docker secrets guidance for production (move from .env to Docker secrets) and CI validation
+- [ ] T046 [P] Decide Grafana policy: add Grafana service and dashboards OR update constitution to remove Grafana; add validation task
 
 ---
 

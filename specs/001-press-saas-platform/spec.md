@@ -187,4 +187,5 @@ En tant qu'administrateur, je veux des backups automatiques quotidiens pour prot
 | MinIO API | 48590 |
 | MinIO Console | 48591 |
 | PostgreSQL | 48532 |
-| Keycloak | 48580 (via Traefik) |
+| Keycloak | 48595 |
+| Press Manager (UI/API) | 48550 |
