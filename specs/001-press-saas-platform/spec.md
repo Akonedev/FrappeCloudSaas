@@ -13,6 +13,7 @@
 
 - Q: Que doit faire le système si Keycloak est indisponible lors d'une tentative de connexion SSO ? → A: Fallback automatique vers authentification locale Frappe (email/password).
 - Q: Quel est le modèle de tenancy pour les sites (DB) ? → A: Option B — schéma par site sur un seul serveur PostgreSQL (un serveur Postgres, un schéma par site).
+- Q: Quelle est la fréquence et la rétention des backups ? → A: Daily backups, retained 30 days (prune older backups).
 
 
 ## User Scenarios & Testing
@@ -95,9 +96,9 @@ En tant qu'administrateur, je veux des backups automatiques quotidiens pour prot
 1. **Given** un site existant, **When** clic "Backup Now", **Then** backup créé dans MinIO
 2. **Given** backup existant, **When** clic "Restore", **Then** le site est restauré à l'état du backup
 3. **Given** schedule configuré, **When** heure du backup, **Then** backup automatique sans intervention
-
-4. **Given** un site supprimé (soft-delete), **When** le restore est demandé dans la période de rétention, **Then** le site est restauré depuis le backup correspondant
-5. **Given** un site supprimé depuis plus de 30 jours, **When** l'administrateur tente la restauration, **Then** la restauration échoue (entité supprimée définitivement)
+4. **Given** schedule configuré (daily), **When** backup runs, **Then** daily backups are saved and backups older than 30 days are pruned automatically
+5. **Given** un site supprimé (soft-delete), **When** le restore est demandé dans la période de rétention, **Then** le site est restauré depuis le backup correspondant
+6. **Given** un site supprimé depuis plus de 30 jours, **When** l'administrateur tente la restauration, **Then** la restauration échoue (entité supprimée définitivement)
 
 ---
 
@@ -130,7 +131,7 @@ En tant qu'administrateur, je veux des backups automatiques quotidiens pour prot
 - **FR-012**: System MUST implementer une stratégie de tenancy PostgreSQL: un seul serveur PostgreSQL, un schéma distinct par site (schema-per-site)
 - **FR-013**: Backups MUST être possible au niveau du schéma (par-site) et restaurables indépendamment
 - **FR-014**: System MUST implementer une soft-delete lifecycle for sites (mark deleted, 30-day retention) and support restore within that retention window
-- **FR-011**: System MUST permettre un fallback automatique vers l'authentification locale Frappe (email/password) si Keycloak est indisponible
+- **FR-015**: Backups MUST be scheduled daily and retained for 30 days (automatic pruning of older backups)
 
 ### Non-Functional Requirements
 
@@ -158,6 +159,7 @@ En tant qu'administrateur, je veux des backups automatiques quotidiens pour prot
 - **SC-003**: L'authentification SSO Keycloak fonctionne sans configuration manuelle côté utilisateur
 - **SC-004**: Les fichiers uploadés sont stockés dans MinIO et accessibles
 - **SC-005**: Un backup complet peut être créé et restauré sans perte de données
+- **SC-006**: Daily backups are scheduled and retained for 30 days (older backups pruned automatically)
 
 ---
 

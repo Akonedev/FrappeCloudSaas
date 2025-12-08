@@ -20,6 +20,11 @@
 | FR-008 | Ports dans plage 48510-49800 | ✅ | ✅ | ⬜ |
 | FR-009 | Healthchecks services critiques | ✅ | ✅ | ⬜ |
 | FR-010 | Backups vers MinIO S3 | ✅ | ✅ | ⬜ |
+| FR-011 | Fallback auth local if Keycloak down | ✅ | ✅ | ⬜ |
+| FR-012 | Tenancy: schema-per-site on single Postgres server | ✅ | ✅ | ⬜ |
+| FR-013 | Backups per-schema (per-site) and restorable independently | ✅ | ✅ | ⬜ |
+| FR-014 | Soft-delete lifecycle (30-day retention) | ✅ | ✅ | ⬜ |
+| FR-015 | Daily backups with 30-day retention and automatic pruning | ✅ | ✅ | ⬜ |
 
 ---
 
@@ -56,6 +61,7 @@
 | SC-003 | SSO sans config user | ✅ | ⬜ |
 | SC-004 | Fichiers dans MinIO | ✅ | ⬜ |
 | SC-005 | Backup/Restore sans perte | ✅ | ⬜ |
+| SC-006 | Daily backups scheduled + 30-day retention | ✅ | ⬜ |
 
 ---
 
@@ -65,6 +71,7 @@
 - [ ] Nom de site en double
 - [ ] MinIO quota atteint
 - [ ] Keycloak down (fallback)
+- [ ] Site soft-delete lifecycle/retention (30 days)
 - [ ] Sites orphelins
 
 ---
