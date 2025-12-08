@@ -96,6 +96,9 @@ En tant qu'administrateur, je veux des backups automatiques quotidiens pour prot
 2. **Given** backup existant, **When** clic "Restore", **Then** le site est restauré à l'état du backup
 3. **Given** schedule configuré, **When** heure du backup, **Then** backup automatique sans intervention
 
+4. **Given** un site supprimé (soft-delete), **When** le restore est demandé dans la période de rétention, **Then** le site est restauré depuis le backup correspondant
+5. **Given** un site supprimé depuis plus de 30 jours, **When** l'administrateur tente la restauration, **Then** la restauration échoue (entité supprimée définitivement)
+
 ---
 
 ### Edge Cases
@@ -105,6 +108,7 @@ En tant qu'administrateur, je veux des backups automatiques quotidiens pour prot
 - Que faire si MinIO est plein (quota atteint) ?
 - Que faire si Keycloak est indisponible ? → Fallback automatique vers authentification locale Frappe (email/password)
 - Gestion des sites orphelins (container supprimé manuellement) ?
+- Suppression de site: soft-delete (marquer supprimé), conserver données 30 jours; suppression permanente après 30 jours si non restauré
 
 ---
 
@@ -125,6 +129,7 @@ En tant qu'administrateur, je veux des backups automatiques quotidiens pour prot
 - **FR-011**: System MUST permettre un fallback automatique vers l'authentification locale Frappe (email/password) si Keycloak est indisponible
 - **FR-012**: System MUST implementer une stratégie de tenancy PostgreSQL: un seul serveur PostgreSQL, un schéma distinct par site (schema-per-site)
 - **FR-013**: Backups MUST être possible au niveau du schéma (par-site) et restaurables indépendamment
+- **FR-014**: System MUST implementer une soft-delete lifecycle for sites (mark deleted, 30-day retention) and support restore within that retention window
 - **FR-011**: System MUST permettre un fallback automatique vers l'authentification locale Frappe (email/password) si Keycloak est indisponible
 
 ### Non-Functional Requirements
