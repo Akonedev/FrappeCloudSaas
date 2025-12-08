@@ -29,12 +29,8 @@ for f in "${FILES[@]}"; do
 
   awk 'BEGIN{in_services=0}
   /^services:/ {in_services=1; next}
-  in_services==1 && /^[[:space:]]+[a-zA-Z0-9_.-]+:/{
-    svc=$1; gsub(":","",svc); cur=svc; if (cur !~ /^fcs-press-/) { printf("SERVICE:%s\n",cur) }
-  }
-  in_services==1 && /^[[:space:]]+container_name:[[:space:]]*(.*)/{
-    name=$2; gsub(/^["' ]+|["' ]+$/,"",name); if (name !~ /^fcs-press-/) { printf("CONTAINER:%s\n",name) }
-  }
+  in_services==1 && match($0, /^[[:space:]]+([a-zA-Z0-9_.-]+):/, m) { svc=m[1]; if (svc !~ /^fcs-press-/) print "SERVICE:" svc }
+  in_services==1 && match($0, /^[[:space:]]+container_name:[[:space:]]*(.*)$/, m) { print "CONTAINER:" m[1] }
   ' "$f" | while read -r line; do
     if [[ "$line" == SERVICE:* ]]; then
       svc=${line#SERVICE:}
@@ -43,7 +39,9 @@ for f in "${FILES[@]}"; do
       else
         block=$(awk -v s="$svc" 'BEGIN{p=0} $0 ~ "^\s*"s":"{p=1} p==1 && NF==0{exit} p==1{print}' "$f")
         if echo "$block" | grep -q "container_name:"; then
-          cname=$(echo "$block" | sed -n "s/.*container_name:[[:space:]]*\(['\"]\?\)\(.*\)\1/\2/p" | tr -d '"\'')
+          raw=$(echo "$block" | sed -n "s/.*container_name:[[:space:]]*\(.*\)$/\1/p")
+          # strip surrounding quotes and spaces
+          cname=$(echo "$raw" | sed -E "s/^['\"]?(.*)['\"]?$/\1/" | xargs)
           if [[ -n "$cname" && ! "$cname" =~ ^fcs-press- ]]; then
             echo "ERROR: container_name '$cname' in service '$svc' of $f does not start with 'fcs-press-'"
             exit 2
