@@ -7,6 +7,14 @@
 
 ---
 
+## Clarifications
+
+### Session 2025-12-08
+
+- Q: Que doit faire le système si Keycloak est indisponible lors d'une tentative de connexion SSO ? → A: Fallback automatique vers authentification locale Frappe (email/password).
+- Q: Quel est le modèle de tenancy pour les sites (DB) ? → A: Option B — schéma par site sur un seul serveur PostgreSQL (un serveur Postgres, un schéma par site).
+
+
 ## User Scenarios & Testing
 
 ### User Story 1 - Démarrer l'infrastructure complète (Priority: P1)
@@ -43,17 +51,18 @@ En tant qu'administrateur, je veux créer un nouveau site Frappe via l'interface
 
 ### User Story 3 - Authentification SSO via Keycloak (Priority: P2)
 
-En tant qu'utilisateur, je veux me connecter à Press via Keycloak SSO pour une authentification centralisée.
+En tant qu'utilisateur, je veux me connecter à Press via Keycloak SSO pour une authentification centralisée, et pouvoir me connecter via email/password local si Keycloak est indisponible.
 
-**Why this priority**: Sécurité et expérience utilisateur unifiée.
+**Why this priority**: Sécurité et expérience utilisateur unifiée, mais résilience en cas de panne SSO.
 
-**Independent Test**: Login via Keycloak et accès automatique à Press.
+**Independent Test**: Login via Keycloak et accès automatique à Press. Simuler une panne Keycloak et tester le fallback local.
 
 **Acceptance Scenarios**:
 
 1. **Given** Keycloak configuré, **When** clic "Login with SSO", **Then** redirection vers Keycloak
 2. **Given** credentials valides sur Keycloak, **When** authentification, **Then** retour automatique sur Press connecté
 3. **Given** session expirée, **When** accès à Press, **Then** redirection vers Keycloak pour re-auth
+4. **Given** Keycloak indisponible, **When** accès à Press, **Then** affichage du formulaire de login local Frappe (email/password)
 
 ---
 
@@ -94,7 +103,7 @@ En tant qu'administrateur, je veux des backups automatiques quotidiens pour prot
 - Que se passe-t-il si PostgreSQL est indisponible au démarrage ?
 - Comment gérer un site dont le nom existe déjà ?
 - Que faire si MinIO est plein (quota atteint) ?
-- Comment récupérer si Keycloak est down (fallback local auth) ?
+- Que faire si Keycloak est indisponible ? → Fallback automatique vers authentification locale Frappe (email/password)
 - Gestion des sites orphelins (container supprimé manuellement) ?
 
 ---
@@ -113,6 +122,10 @@ En tant qu'administrateur, je veux des backups automatiques quotidiens pour prot
 - **FR-008**: System MUST exposer les services uniquement dans la plage de ports 48510-49800
 - **FR-009**: System MUST inclure des healthchecks pour tous les services critiques
 - **FR-010**: System MUST supporter les backups vers MinIO S3
+- **FR-011**: System MUST permettre un fallback automatique vers l'authentification locale Frappe (email/password) si Keycloak est indisponible
+- **FR-012**: System MUST implementer une stratégie de tenancy PostgreSQL: un seul serveur PostgreSQL, un schéma distinct par site (schema-per-site)
+- **FR-013**: Backups MUST être possible au niveau du schéma (par-site) et restaurables indépendamment
+- **FR-011**: System MUST permettre un fallback automatique vers l'authentification locale Frappe (email/password) si Keycloak est indisponible
 
 ### Non-Functional Requirements
 
