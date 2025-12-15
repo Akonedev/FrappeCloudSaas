@@ -1,0 +1,34 @@
+services:
+  configurator:
+    networks:
+      - fcs-press-network
+
+  backend:
+    networks:
+      - fcs-press-network
+
+  frontend:
+    container_name: fcs-press-frontend
+    networks:
+      - fcs-press-network
+
+  websocket:
+    networks:
+      - fcs-press-network
+
+  queue-short:
+    networks:
+      - fcs-press-network
+
+  queue-long:
+    networks:
+      - fcs-press-network
+
+  scheduler:
+    networks:
+      - fcs-press-network
+
+networks:
+  fcs-press-network:
+    name: fcs-press-network
+    external: true

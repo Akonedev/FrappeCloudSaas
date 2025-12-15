@@ -1,0 +1,29 @@
+# Python
+*.pyc
+__pycache__/
+.pytest_cache/
+venv/
+env/
+.venv/
+
+# Environment
+/.env
+
+# IDEs
+.vscode/
+.idea/
+
+# Claude/AI tools
+.claude/
+.claude-flow/
+.swarm/
+.hive-mind/
+
+# Temporary
+*.log
+*.tmp
+.DS_Store
+
+# Frappe/Bench specific (si besoin local)
+sites/
+logs/

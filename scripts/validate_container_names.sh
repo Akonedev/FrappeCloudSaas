@@ -29,7 +29,10 @@ for f in "${FILES[@]}"; do
 
   awk 'BEGIN{in_services=0}
   /^services:/ {in_services=1; next}
-  in_services==1 && match($0, /^[[:space:]]+([a-zA-Z0-9_.-]+):/, m) { svc=m[1]; if (svc !~ /^fcs-press-/) print "SERVICE:" svc }
+  # if we hit a top-level key (no indent) we exit services block
+  /^[^[:space:]]/ { in_services=0 }
+  # match only top-level service names in services: (exactly two-space indent)
+  in_services==1 && match($0, /^  ([a-zA-Z0-9_.-]+):/, m) { svc=m[1]; if (svc !~ /^fcs-press-/) print "SERVICE:" svc }
   in_services==1 && match($0, /^[[:space:]]+container_name:[[:space:]]*(.*)$/, m) { print "CONTAINER:" m[1] }
   ' "$f" | while read -r line; do
     if [[ "$line" == SERVICE:* ]]; then

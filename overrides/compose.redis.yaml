@@ -1,0 +1,36 @@
+services:
+  configurator:
+    environment:
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+    depends_on:
+      - redis-cache
+      - redis-queue
+
+  redis-cache:
+    container_name: fcs-press-redis-cache
+    image: redis:7-alpine
+    restart: ${RESTART_POLICY:-unless-stopped}
+    networks:
+      - fcs-press-network
+    ports:
+      - "48510:6379"
+
+  redis-queue:
+    container_name: fcs-press-redis-queue
+    image: redis:7-alpine
+    restart: ${RESTART_POLICY:-unless-stopped}
+    volumes:
+      - redis-queue-data:/data
+    networks:
+      - fcs-press-network
+    ports:
+      - "48511:6379"
+
+volumes:
+  redis-queue-data:
+
+networks:
+  fcs-press-network:
+    name: fcs-press-network
+    external: true

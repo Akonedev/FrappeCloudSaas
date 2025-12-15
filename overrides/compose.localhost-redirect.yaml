@@ -1,0 +1,9 @@
+# Nginx configuration override for localhost redirect
+# This override adds a redirect from localhost to press.localhost
+# Usage: Add to your compose command to enable localhost redirect
+
+services:
+  frontend:
+    volumes:
+      # Mount localhost redirect configuration
+      - ./overrides/nginx-localhost-redirect.conf:/etc/nginx/conf.d/localhost-redirect.conf:ro
