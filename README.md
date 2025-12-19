@@ -1,289 +1,218 @@
-# 🏗️ Frappe Cloud - Local SaaS Platform
+# Press SaaS Platform - Frappe v16 + PostgreSQL 16
 
-> Deploy Frappe/ERPNext locally with Podman - No cloud providers needed!
+Plateforme Press SaaS complète utilisant **Frappe Framework v16** avec **PostgreSQL 16** dans une architecture containerisée standard.
 
-## 📋 Table of Contents
+## 🚀 Démarrage rapide
 
-- [Overview](#-overview)
-- [Prerequisites](#-prerequisites)
-- [Quick Start](#-quick-start)
-- [Architecture](#-architecture)
-- [Services](#-services)
-- [Site Management](#-site-management)
-- [Backup & Restore](#-backup--restore)
-- [Troubleshooting](#-troubleshooting)
-
-## 🎯 Overview
-
-This project provides a complete local Frappe/ERPNext platform using:
-
-| Component | Purpose | URL |
-|-----------|---------|-----|
-| **Traefik** | Reverse proxy & routing | http://traefik.localhost |
-| **MinIO** | S3-compatible storage | http://minio.localhost |
-| **Registry** | Container image registry | http://registry.localhost |
-| **MariaDB** | Database server | Internal |
-| **Redis** | Cache & Queue | Internal |
-| **Frappe** | Backend framework | http://erp.localhost |
-
-## 📦 Prerequisites
-
-### Fedora/RHEL
 ```bash
-# Install Podman & Compose
-sudo dnf install -y podman podman-compose
+# Créer le réseau
+podman network create fcs-press-network
 
-# Enable Podman socket (for rootless)
-systemctl --user enable --now podman.socket
+# Lancer tous les services
+podman compose \
+  -f compose.yaml \
+  -f overrides/compose.postgres.yaml \
+  -f overrides/compose.redis.yaml \
+  -f overrides/compose.noproxy.yaml \
+  -f overrides/compose.networks.yaml \
+  up -d
+
+# Attendre ~2 minutes que tous les services démarrent
+sleep 120
+
+# Créer le premier site
+podman exec frappe_docker_git-backend-1 bench new-site press.localhost \
+  --admin-password admin \
+  --db-type postgres \
+  --db-host fcs-press-db \
+  --db-port 5432 \
+  --db-root-username postgres \
+  --db-root-password fcs_press_secure_password_2025 \
+  --install-app erpnext \
+  --set-default
 ```
 
-### Ubuntu/Debian
+## 🌐 Accès
+
+### Option 1 : Via localhost (Redirection automatique) ✨
+
+**URL directe** : <http://localhost:48580>
+
+Le navigateur sera **automatiquement redirigé** vers `http://press.localhost:48580`
+
+**Identifiants** :
+
+- Username: `Administrator`
+- Password: `admin`
+
+### Option 2 : Via hostname direct (Nécessite /etc/hosts)
+
 ```bash
-# Install Podman
-sudo apt install -y podman podman-compose
+# Ajouter dans /etc/hosts
+echo "127.0.0.1 press.localhost" | sudo tee -a /etc/hosts
 
-# Enable Podman socket
-systemctl --user enable --now podman.socket
+# Puis accéder directement
+# URL: http://press.localhost:48580
 ```
 
-### Verify Installation
+### 🔧 Comment ça marche ?
+
+Nginx est configuré pour **rediriger automatiquement** `localhost` vers `press.localhost` :
+
+```text
+http://localhost:48580
+  ↓ Nginx 301 Redirect
+http://press.localhost:48580
+  ↓ Frappe trouve le site
+✅ Page de login
+```
+
+**Configuration** : La redirection est définie dans [`overrides/compose.localhost-redirect.yaml`](overrides/compose.localhost-redirect.yaml)
+
+## 📋 Architecture
+
+### Services déployés
+
+| Service | Container | Port | Description |
+|---------|-----------|------|-------------|
+| PostgreSQL 16 | `fcs-press-db` | 48532 | Base de données |
+| Redis Cache | `fcs-press-redis-cache` | 48510 | Cache |
+| Redis Queue | `fcs-press-redis-queue` | 48511 | Files d'attente |
+| Frontend | `fcs-press-frontend` | **48580** | Nginx |
+| Backend | `frappe_docker_git-backend-1` | - | Gunicorn |
+| WebSocket | `frappe_docker_git-websocket-1` | - | Socket.IO |
+| Workers | `frappe_docker_git-queue-*` | - | RQ workers |
+| Scheduler | `frappe_docker_git-scheduler-1` | - | Cron tasks |
+
+### Stack technique
+
+- **Frappe Framework**: v16 (image officielle `frappe/erpnext:v16`)
+- **ERPNext**: v16
+- **PostgreSQL**: 16 (multi-tenancy schema-per-site)
+- **Redis**: 7-alpine
+- **Python**: 3.12 (dans image Frappe)
+- **Node.js**: 18 (dans image Frappe)
+- **Nginx**: 1.22 (dans image Frappe)
+
+## 📚 Documentation
+
+- **[DEPLOYMENT.md](docs/DEPLOYMENT.md)** - Guide complet de déploiement
+- **[Specs](specs/001-press-saas-platform/)** - Spécifications complètes du projet
+
+## 🛠️ Commandes utiles
+
+### Gestion des containers
+
 ```bash
-podman --version
-podman-compose --version
+# Voir les logs
+podman logs -f fcs-press-frontend
+podman logs -f frappe_docker_git-backend-1
+
+# Entrer dans un container
+podman exec -it frappe_docker_git-backend-1 bash
+
+# Arrêter tout
+podman compose \
+  -f compose.yaml \
+  -f overrides/compose.postgres.yaml \
+  -f overrides/compose.redis.yaml \
+  -f overrides/compose.noproxy.yaml \
+  -f overrides/compose.networks.yaml \
+  down
+
+# Tout supprimer (avec volumes)
+podman compose \
+  -f compose.yaml \
+  -f overrides/compose.postgres.yaml \
+  -f overrides/compose.redis.yaml \
+  -f overrides/compose.noproxy.yaml \
+  -f overrides/compose.networks.yaml \
+  down -v
 ```
 
-## 🚀 Quick Start
+### Commandes Frappe Bench
 
-### 1. Clone & Setup
 ```bash
-cd /path/to/frappe_docker_git
+# Lister les apps installées
+podman exec frappe_docker_git-backend-1 bench --site press.localhost list-apps
 
-# Copy environment file
-cp .env.example .env
+# Console Python
+podman exec -it frappe_docker_git-backend-1 bench --site press.localhost console
 
-# Edit with your values
-nano .env
+# Migrate la base de données
+podman exec frappe_docker_git-backend-1 bench --site press.localhost migrate
+
+# Backup
+podman exec frappe_docker_git-backend-1 bench --site press.localhost backup
+
+# Créer un nouveau site
+podman exec frappe_docker_git-backend-1 bench new-site NOMSITE \
+  --admin-password PASSWORD \
+  --db-type postgres \
+  --db-host fcs-press-db \
+  --install-app erpnext
 ```
 
-### 2. Configure /etc/hosts
-Add these entries to `/etc/hosts`:
-```
-127.0.0.1 traefik.localhost
-127.0.0.1 minio.localhost
-127.0.0.1 s3.localhost
-127.0.0.1 registry.localhost
-127.0.0.1 registry-ui.localhost
-127.0.0.1 erp.localhost
-```
+## 🔧 Configuration
 
-Or use the helper:
-```bash
-echo "127.0.0.1 traefik.localhost minio.localhost s3.localhost registry.localhost registry-ui.localhost erp.localhost" | sudo tee -a /etc/hosts
+### Variables d'environnement (.env)
+
+```env
+ERPNEXT_VERSION=v16
+DB_PASSWORD=fcs_press_secure_password_2025
+HTTP_PUBLISH_PORT=48580
+CUSTOM_IMAGE=frappe/erpnext
+CUSTOM_TAG=v16
 ```
 
-### 3. Start Services
-```bash
-# Make scripts executable
-chmod +x scripts/*.sh
+### Ports utilisés (48510-49800)
 
-# Start all services
-podman compose up -d
+- **48510**: Redis Cache
+- **48511**: Redis Queue
+- **48532**: PostgreSQL
+- **48580**: Frontend Nginx ⭐
 
-# Watch logs
-podman compose logs -f
-```
-
-### 4. Create Your First Site
-```bash
-# Wait for services to be ready (check configurator logs)
-podman logs -f configurator
-
-# Create site (once configurator completes)
-./scripts/create-site.sh erp.localhost admin
-```
-
-### 5. Access Your Site
-Open http://erp.localhost in your browser
-- **Username:** Administrator
-- **Password:** admin (or your custom password)
-
-## 🏛️ Architecture
+## 📁 Structure du projet
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         TRAEFIK                                 │
-│                    (Reverse Proxy)                              │
-│              http://traefik.localhost:80                        │
-└─────────────────────────────────────────────────────────────────┘
-         │              │              │              │
-         ▼              ▼              ▼              ▼
-┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-│   MinIO     │ │  Registry   │ │   Frappe    │ │  WebSocket  │
-│ (S3 Store)  │ │  (Images)   │ │  (Backend)  │ │ (Socket.IO) │
-└─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
-                                       │
-                    ┌──────────────────┼──────────────────┐
-                    ▼                  ▼                  ▼
-             ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-             │  MariaDB    │   │ Redis Cache │   │ Redis Queue │
-             │ (Database)  │   │             │   │             │
-             └─────────────┘   └─────────────┘   └─────────────┘
+.
+├── compose.yaml                    # Compose de base (frappe_docker)
+├── overrides/                      # Overrides modulaires
+│   ├── compose.postgres.yaml       # PostgreSQL 16
+│   ├── compose.redis.yaml          # Redis 7
+│   ├── compose.noproxy.yaml        # Exposition directe
+│   └── compose.networks.yaml       # Réseau fcs-press-network
+├── .env                            # Configuration environnement
+├── docs/
+│   ├── DEPLOYMENT.md               # Guide déploiement
+│   └── FRAPPE_DOCKER_ORIGINAL.md   # README original frappe_docker
+├── specs/                          # Spécifications du projet
+└── scripts/                        # Scripts utilitaires
 ```
 
-## 🔧 Services
+## ✅ Solution standard
 
-### Infrastructure (`compose/infra.yaml`)
+Ce projet utilise **100% la solution standard** de [frappe/frappe_docker](https://github.com/frappe/frappe_docker):
+- Images officielles frappe/erpnext
+- Structure compose modulaire
+- Overrides pour PostgreSQL 16
+- Aucun code custom
+- Compatible mises à jour officielles
 
-| Service | Image | Purpose |
-|---------|-------|---------|
-| traefik | traefik:v3.2 | Reverse proxy, TLS, routing |
-| minio | minio/minio | S3-compatible object storage |
-| registry | registry:2 | Docker/Podman image registry |
-| registry-ui | joxit/docker-registry-ui | Web UI for registry |
-| coredns | coredns/coredns | Local DNS (optional) |
+## 🎯 Prochaines étapes
 
-### Frappe Stack (`compose/frappe.yaml`)
+1. **Installer l'app Press** dans le bench
+2. **Déployer le dashboard Press** (frappe-ui)
+3. **Configurer multi-tenancy** avancé
+4. **Ajouter monitoring** (Prometheus/Grafana)
+5. **Setup CI/CD** avec GitHub Actions
 
-| Service | Image | Purpose |
-|---------|-------|---------|
-| mariadb | mariadb:10.11 | Database server |
-| redis-cache | redis:7-alpine | Caching |
-| redis-queue | redis:7-alpine | Background jobs |
-| frappe-backend | frappe/erpnext:v15 | Gunicorn (Python) |
-| frappe-websocket | frappe/erpnext:v15 | Socket.IO (Node.js) |
-| frappe-scheduler | frappe/erpnext:v15 | Scheduled tasks |
-| frappe-worker-short | frappe/erpnext:v15 | Short queue jobs |
-| frappe-worker-long | frappe/erpnext:v15 | Long queue jobs |
-| configurator | frappe/erpnext:v15 | One-time setup |
+## 📝 Licence
 
-## 📁 Project Structure
+Ce projet utilise Frappe Framework sous licence MIT.
 
-```
-frappe_docker_git/
-├── compose.yaml              # Main compose file (includes others)
-├── .env.example              # Environment template
-├── compose/
-│   ├── infra.yaml           # Infrastructure services
-│   └── frappe.yaml          # Frappe/ERPNext services
-├── config/
-│   ├── traefik/
-│   │   └── dynamic.yaml     # Traefik routing rules
-│   └── coredns/
-│       └── Corefile         # DNS configuration
-└── scripts/
-    ├── create-site.sh       # Create new Frappe site
-    ├── backup.sh            # Backup sites to MinIO
-    └── init-minio.sh        # Initialize MinIO buckets
-```
+---
 
-## 🌐 Site Management
-
-### Create a New Site
-```bash
-# Basic site with ERPNext
-./scripts/create-site.sh mysite.localhost admin
-
-# Site without ERPNext
-./scripts/create-site.sh mysite.localhost admin no
-```
-
-### List Sites
-```bash
-podman exec frappe-backend ls /home/frappe/frappe-bench/sites
-```
-
-### Switch Default Site
-```bash
-podman exec frappe-backend bench use mysite.localhost
-```
-
-### Access Bench Console
-```bash
-podman exec -it frappe-backend bench console
-```
-
-### Run Bench Commands
-```bash
-podman exec frappe-backend bench --site mysite.localhost migrate
-podman exec frappe-backend bench --site mysite.localhost clear-cache
-```
-
-## 💾 Backup & Restore
-
-### Backup
-```bash
-# Backup all sites
-./scripts/backup.sh all
-
-# Backup specific site
-./scripts/backup.sh mysite.localhost
-```
-
-### Restore
-```bash
-# Restore from backup file
-podman exec frappe-backend bench --site mysite.localhost restore /path/to/backup.sql.gz
-```
-
-## 🔍 Troubleshooting
-
-### Check Container Status
-```bash
-podman ps -a
-podman compose ps
-```
-
-### View Logs
-```bash
-# All logs
-podman compose logs -f
-
-# Specific service
-podman compose logs -f frappe-backend
-podman compose logs -f configurator
-```
-
-### Common Issues
-
-#### Podman Socket Not Found
-```bash
-# Enable user socket
-systemctl --user enable --now podman.socket
-
-# Verify
-ls -la /run/user/$(id -u)/podman/podman.sock
-```
-
-#### Permission Denied on Volumes
-```bash
-# Fix with :Z flag (SELinux)
-# Already included in compose files
-```
-
-#### Site Not Accessible
-1. Check /etc/hosts
-2. Verify Traefik is running: `podman logs traefik`
-3. Check Frappe backend: `podman logs frappe-backend`
-
-### Reset Everything
-```bash
-# Stop and remove all
-podman compose down -v
-
-# Remove all volumes
-podman volume prune -f
-
-# Start fresh
-podman compose up -d
-```
-
-## 📚 Additional Resources
-
-- [Frappe Documentation](https://frappeframework.com/docs)
-- [ERPNext Documentation](https://docs.erpnext.com)
-- [Traefik Documentation](https://doc.traefik.io/traefik/)
-- [Podman Documentation](https://docs.podman.io)
-
-## 📄 License
-
-MIT License - See [LICENSE](LICENSE) for details.
+**Version**: Frappe v16 + PostgreSQL 16
+**Date**: Décembre 2025
+**Maintenu par**: @akone

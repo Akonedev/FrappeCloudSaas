@@ -1,0 +1,498 @@
+openapi: 3.0.3
+info:
+  title: Press Manager API (Press SaaS)
+  version: 0.1.0
+  description: Minimal OpenAPI surface for the Press control-plane used by the platform
+servers:
+  - url: https://press.localhost:48543
+paths:
+  /api/sites:
+    get:
+      summary: List sites
+      operationId: listSites
+      responses:
+        '200':
+          description: Site list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Site'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      summary: Create a new site
+      operationId: createSite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSiteRequest'
+      responses:
+        '201':
+          description: Site created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/sites/{site_id}:
+    get:
+      summary: Get site details
+      operationId: getSite
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Site record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      summary: Delete a site (soft-delete)
+      operationId: deleteSite
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '202':
+          description: Site marked for deletion (soft-delete, 30-day retention)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/sites/{site_id}/backup:
+    post:
+      summary: Trigger immediate backup for site
+      operationId: backupSite
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '202':
+          description: Backup scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '507':
+          $ref: '#/components/responses/InsufficientStorage'
+  /api/sites/{site_id}/restore:
+    post:
+      summary: Restore a site from backup
+      operationId: restoreSite
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreRequest'
+      responses:
+        '202':
+          description: Restore scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /health:
+    get:
+      summary: Health check for Press manager
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/login:
+    get:
+      summary: Redirect user to identity provider (Keycloak)
+      operationId: authLogin
+      security: []
+      responses:
+        '302':
+          description: Redirect to auth provider
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/callback:
+    get:
+      summary: OIDC callback endpoint
+      operationId: authCallback
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Authentication success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  schemas:
+    # Request Schemas
+    CreateSiteRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Unique site name (alphanumeric + hyphen, DNS-safe)
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$'
+          minLength: 2
+          maxLength: 64
+        display_name:
+          type: string
+          description: Human-readable display name
+          maxLength: 255
+        apps:
+          type: array
+          description: Frappe apps to install
+          items:
+            type: string
+          default: []
+
+    RestoreRequest:
+      type: object
+      required:
+        - backup_id
+      properties:
+        backup_id:
+          type: string
+          format: uuid
+          description: ID of the backup to restore from
+
+    # Response Schemas
+    Site:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        display_name:
+          type: string
+        domain:
+          type: string
+          format: hostname
+        schema_name:
+          type: string
+        status:
+          type: string
+          enum: [provisioning, running, healthy, failed, soft_deleted, deleted]
+        created_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        retention_until:
+          type: string
+          format: date-time
+          nullable: true
+        apps:
+          type: array
+          items:
+            type: string
+
+    BackupJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, in_progress, success, failed]
+        started_at:
+          type: string
+          format: date-time
+        estimated_completion:
+          type: string
+          format: date-time
+          nullable: true
+
+    RestoreJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        backup_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, in_progress, success, failed]
+        started_at:
+          type: string
+          format: date-time
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        services:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [up, down, degraded]
+              latency_ms:
+                type: integer
+
+    AuthToken:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          default: Bearer
+        expires_in:
+          type: integer
+          description: Token expiry in seconds
+
+    # Error Schemas
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error code
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error context
+          additionalProperties: true
+        request_id:
+          type: string
+          description: Request ID for tracing
+
+    ValidationError:
+      type: object
+      required:
+        - error
+        - message
+        - validation_errors
+      properties:
+        error:
+          type: string
+          default: validation_error
+        message:
+          type: string
+        validation_errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+              code:
+                type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters or body
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+          example:
+            error: validation_error
+            message: Request validation failed
+            validation_errors:
+              - field: name
+                message: Site name must be alphanumeric with hyphens only
+                code: invalid_format
+
+    Unauthorized:
+      description: Authentication required or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: unauthorized
+            message: Authentication required
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: not_found
+            message: Site not found
+
+    Conflict:
+      description: Resource conflict (e.g., duplicate site name)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: conflict
+            message: A site with this name already exists
+            details:
+              existing_site_id: 123e4567-e89b-12d3-a456-426614174000
+
+    Gone:
+      description: Resource permanently deleted (past retention period)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: gone
+            message: Site was permanently deleted after 30-day retention period
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: internal_error
+            message: An unexpected error occurred
+            request_id: req_abc123
+
+    ServiceUnavailable:
+      description: Service temporarily unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: service_unavailable
+            message: Keycloak authentication service is temporarily unavailable
+
+    InsufficientStorage:
+      description: Storage quota exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: insufficient_storage
+            message: MinIO storage quota exceeded
+            details:
+              quota_bytes: 10737418240
+              used_bytes: 10737418240
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /auth/callback
+
+security:
+  - bearerAuth: []

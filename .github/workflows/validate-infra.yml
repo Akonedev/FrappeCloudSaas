@@ -1,0 +1,23 @@
+name: Validate infra (compose checks)
+
+on:
+  pull_request:
+  push:
+    branches: [ main, "001-press-saas-platform" ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run container-name validation
+        run: |
+          set -euo pipefail
+          ./scripts/validate_container_names.sh
+
+      - name: Run port validation
+        run: |
+          set -euo pipefail
+          ./scripts/validate_ports.sh

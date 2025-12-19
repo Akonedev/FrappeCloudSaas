@@ -1,0 +1,38 @@
+# Git attributes for Press SaaS Platform
+# Ensures consistent handling of files across platforms
+
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Explicitly declare text files
+*.md text
+*.txt text
+*.yaml text
+*.yml text
+*.conf text
+*.py text eol=lf
+*.sh text eol=lf
+*.json text
+
+# Denote all files that are binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+
+# Security: Never diff or merge sensitive files
+.env merge=ours
+*.key merge=ours
+*.pem merge=ours
+
+# Export ignore (files not included in git archive/export)
+.gitattributes export-ignore
+.gitignore export-ignore
+.github export-ignore
+tests export-ignore
+.claude export-ignore
+.claude-flow export-ignore
+.swarm export-ignore
+.hive-mind export-ignore
